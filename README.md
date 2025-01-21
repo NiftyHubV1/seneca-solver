@@ -41,3 +41,13 @@ You must have the following installed:
     ![Image showing what this should look like](docs/images/network_access_key.png)
 
 1. The script should now start solving your assignments. This may take up to 15 minutes. Also note that your access key will expire every hour, meaning you will need to repeat this process. Using refresh tokens instead of access keys is on the To Do list.
+
+## Troubleshooting/common errors
+
+### Expired access key
+
+``` json
+{"message":"Unauthorized"}
+```
+
+Your access key has expired, obtain a new one.
