@@ -51,3 +51,11 @@ You must have the following installed:
 ```
 
 Your access key has expired, obtain a new one.
+
+### Ratelimit
+
+``` json
+{"message":"Forbidden"}
+```
+
+You have been ratelimited by Seneca, wait a while, such as 15 minutes, and try again.
