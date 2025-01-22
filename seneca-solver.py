@@ -193,7 +193,7 @@ def run_solver(course_id, section_id, content_id, user_id, access_key):
         "userAnswer": {},
         "courseId": course_id,
         "sectionId": section_id,
-        "contentId": "",  # fill in
+        "contentId": content_id,  # fill in
     }
 
     non_questions = 0
@@ -202,13 +202,13 @@ def run_solver(course_id, section_id, content_id, user_id, access_key):
         module_template_2 = module_template.copy()
         module_template_2["moduleOrder"] = module_no
         module_template_2["moduleId"] = module["id"]
-        module_template_2["contentId"] = content_id
 
         module_template_2["moduleType"] = module["moduleType"]
 
         if (
             module["moduleType"] == "concept"
             or module["moduleType"] == "video"
+            or module["moduleType"] == "image"
             or module["moduleType"] == "delve"
         ):
             module_template_2["submitted"] = False
@@ -301,6 +301,19 @@ def get_assignments(access_key):
         exit(code=-1)
 
 
+def solve_assignments(assignment, user_id, access_key):
+    course_id = assignment["spec"]["courseId"]
+    section_id_len = len(assignment["spec"]["sectionIds"])
+
+    for j, section_id in enumerate(assignment["spec"]["sectionIds"]):
+        contents = get_content(course_id, section_id, access_key)["contents"]
+
+        for content in contents:
+            run_solver(course_id, section_id, content["id"], user_id, access_key)
+
+        print(f"Solved in assignment: {j+1}/{section_id_len}")
+
+
 # Get access key
 access_key = input("Enter your access key: ")
 
@@ -308,22 +321,31 @@ access_key = input("Enter your access key: ")
 user_id = get_user_id(access_key)
 
 assignments = get_assignments(access_key)
-assignments_len = len(assignments)
 
-# Solve!
+now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+
+longest_name_len = 0
+for assignment in assignments.copy():    
+    start_date = datetime.datetime.strptime(assignment["startDate"],'%Y-%m-%dT%H:%M:%S.000Z').replace(tzinfo=datetime.timezone.utc)
+
+    if start_date > now:
+        assignments.remove(assignment)
+        continue
+    
+    longest_name_len = max(longest_name_len, len(assignment["name"]))
+
+print("Assignments:")
 for i, assignment in enumerate(assignments):
-    course_id = assignment["spec"]["courseId"]
     print(
-        f"\nMoving to next assignment: {i+1}\nIn total, {len(assignment['spec']['sectionIds'])} sections will be solved"
+        f"{i+1}. {assignment['name'] + ' '*(longest_name_len - len(assignment['name']))} - {assignment['status']} - Due: {assignment['dueDate']} - Start: {assignment['startDate']}"
     )
 
-    section_id_len = len(assignment["spec"]["sectionIds"])
+assignment_no = int(input("Enter the assignment number to solve: ")) - 1
 
-    print(f"Assignments: {i+1}/{assignments_len}")
+while assignment_no < 0 or assignment_no >= len(assignments):
+    print("Invalid assignment number")
+    assignment_no = int(input("Enter the assignment number to solve: ")) - 1
 
-    for j, section_id in enumerate(assignment["spec"]["sectionIds"]):
-        for content_id in assignment["spec"]["sectionContentIds"][section_id]:
-            run_solver(course_id, section_id, content_id, user_id, access_key)
+solve_assignments(assignments[assignment_no], user_id, access_key)
 
-        print(f"\nAssignments: {i+1}/{assignments_len}")
-        print(f"Solved in assignment: {j+1}/{section_id_len}")
+print("Done!")
