@@ -40,7 +40,9 @@ You must have the following installed:
     1. Copy the value of the HTTP header named `access-key` (making sure to copy the whole thing) and paste it into the script. **Note:** Some browsers (mainly Firefox-based ones at the time of writing) truncate the access key in the middle since it is very long. Right click it and click copy instead of selecting everything and copying.
     ![Image showing what this should look like](docs/images/network_access_key.png)
 
-1. The script should now start solving your assignments. This may take up to 15 minutes. Also note that your access key will expire every hour, meaning you will need to repeat this process. Using refresh tokens instead of access keys is on the To Do list.
+1. Your assignments will be printed to the terminal. Enter the assignment number to run it.
+
+1. The script should now start solving your assignments. This may 5 or more minutes depending on the lenghth of the . Also note that your access key will expire every hour, meaning you will need to repeat the key obtaining process every hour. Using refresh tokens instead of access keys is on the To Do list.
 
 ## Troubleshooting/common errors
 
