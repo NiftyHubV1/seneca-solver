@@ -1,0 +1,15 @@
+[package]
+name = "seneca-solver"
+version = "0.3.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4.39"
+inquire = "0.7.5"
+rand = "0.8.5"
+reqwest = { version = "0.12.12", features = ["gzip", "brotli", "deflate", "json"] }
+tokio = { version = "1.43.0", features = ["full"] }
+serde_json = "1.0.137"
+copypasta = "0.10.1"
+url = "2.5.4"
+indicatif = "0.17.9"
