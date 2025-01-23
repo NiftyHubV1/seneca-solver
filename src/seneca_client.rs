@@ -1,7 +1,8 @@
 use crate::utils::generate_hex_string;
 
 use chrono::{prelude::*, Duration};
-use reqwest::header::{self, HeaderMap, HeaderValue};
+use url::form_urlencoded::byte_serialize;
+use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::error::Error;
@@ -15,7 +16,7 @@ pub struct SenecaClient<'a> {
 impl<'a> SenecaClient<'a> {
     pub async fn new(access_key: &'a str) -> Result<Self, Box<dyn Error>> {
         let client = Client::new();
-        println!("SenecaClient created");
+
         let mut self_to_return = Self {
             client,
             access_key,
@@ -62,6 +63,9 @@ impl<'a> SenecaClient<'a> {
             let body = response.json::<Value>().await?;
             Ok(body["userId"].as_str().unwrap().to_string())
         } else {
+            if response.status() == 401 {
+                eprintln!("Invalid access key. Double-check that you copied it correctly and that it hasn't expired. For more information, see https://github.com/ArcaEge/seneca-solver#expired-access-key");
+            }
             Err(Box::new(response.error_for_status().unwrap_err()))
         }
     }
@@ -113,7 +117,7 @@ impl<'a> SenecaClient<'a> {
         }
     }
 
-    pub async fn get_content(
+    pub async fn get_contents(
         &self,
         course_id: &str,
         section_id: &str,
@@ -124,7 +128,6 @@ impl<'a> SenecaClient<'a> {
 
         if response.status().is_success() {
             let body = response.json::<Value>().await?;
-            // println!("{:#?}", body);
             Ok(body["contents"].clone())
         } else {
             Err(Box::new(response.error_for_status().unwrap_err()))
@@ -135,15 +138,9 @@ impl<'a> SenecaClient<'a> {
         &self,
         course_id: &str,
         section_id: &str,
-        content_id: &str,
+        content: &Value,
     ) -> Result<(), Box<dyn Error>> {
-        let contents = self.get_content(course_id, section_id).await?;
-        let content = contents
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|x| x["id"].as_str().unwrap() == content_id)
-            .unwrap();
+        let content_id = content["id"].as_str().unwrap();
 
         let session_id = format!(
             "{}-{}-{}-{}-{}",
@@ -153,20 +150,11 @@ impl<'a> SenecaClient<'a> {
             generate_hex_string(2),
             generate_hex_string(6)
         );
-        println!("Session ID: {}", session_id);
 
         let now = Utc::now();
         let started = now - Duration::minutes(2);
         let started_module = now - Duration::seconds(15);
-
-        // SecondsFormat::Secs used to only show seconds, false used to show timezone (+00:00)
-        println!("{}", now.to_rfc3339_opts(SecondsFormat::Secs, false));
-        println!("{}", started.to_rfc3339_opts(SecondsFormat::Secs, false));
-        println!(
-            "{}",
-            started_module.to_rfc3339_opts(SecondsFormat::Secs, false)
-        );
-
+        
         let non_question_module_types = vec!["concept", "video", "image", "delve"];
 
         let content_modules = content["contentModules"].as_array().unwrap();
@@ -304,6 +292,53 @@ impl<'a> SenecaClient<'a> {
 
         if response.status().is_success() {
             Ok(())
+        } else {
+            Err(Box::new(response.error_for_status().unwrap_err()))
+        }
+    }
+
+    pub async fn get_assignments(&self) -> Result<Vec<Value>, Box<dyn Error>> {
+        let one_month_ago = Utc::now() - Duration::days(30);
+        let url = 
+            format!("https://assignments.app.senecalearning.com/api/students/me/assignments?limit=500&date={}&archived=false",
+            byte_serialize(one_month_ago.to_rfc3339_opts(SecondsFormat::Secs, false).as_bytes()).collect::<String>());
+
+        let headers = Self::assemble_headers(vec![
+            ("Host", "assignments.app.senecalearning.com"),
+            (
+                "User-Agent",
+                "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
+            ),
+            ("Accept", "*/*"),
+            ("Accept-Language", "en-GB,en;q=0.5"),
+            ("Accept-Encoding", "gzip, deflate, br, zstd"),
+            ("Referer", "https://app.senecalearning.com/"),
+            ("access-key", &self.access_key),
+            (
+                "correlationId",
+                "1737330516472::76115c42-02c9-4d56-0000-000000000000",
+            ),
+            ("Content-Type", "application/json"),
+            ("X-Amz-Date", "20250122T190413Z"),
+            ("user-region", "GB"),
+            ("Origin", "https://app.senecalearning.com"),
+            ("DNT", "1"),
+            ("Sec-GPC", "1"),
+            ("Sec-Fetch-Dest", "empty"),
+            ("Sec-Fetch-Mode", "cors"),
+            ("Sec-Fetch-Site", "same-site"),
+            ("Connection", "keep-alive"),
+            ("host", "assignments.app.senecalearning.com"),
+        ]);
+
+        let response = self.client.get(url).headers(headers).send().await?;
+
+        if response.status().is_success() {
+            let body = response.json::<Value>().await?;
+            Ok(body.as_object().unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .to_vec())
         } else {
             Err(Box::new(response.error_for_status().unwrap_err()))
         }
