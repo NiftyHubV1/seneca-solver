@@ -3,8 +3,10 @@ mod utils;
 
 use utils::{generate_assignment_string, read_clipboard};
 
+use chrono::{DateTime, Utc};
 use indicatif::ProgressBar;
 use inquire::{Password, PasswordDisplayMode, Select, Text};
+use regex::Regex;
 use seneca_client::SenecaClient;
 use serde_json::Value;
 use std::error::Error;
@@ -36,6 +38,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let client = SenecaClient::new(&access_key).await?;
     let assignments = client.get_assignments().await?;
 
+    // Filter out assignments that have not started yet
+    let now = Utc::now();
+    let assignments: Vec<&Value> = assignments
+        .iter()
+        .filter(|assignment| {
+            DateTime::parse_from_rfc3339(assignment["startDate"].as_str().unwrap()).unwrap() <= now
+        })
+        .collect();
+
     // Find longest assignment name and longest status to use for padding
     let longest_assignment_length = assignments
         .iter()
@@ -55,30 +66,59 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .collect();
     let mut assignment_names: Vec<&str> = assignment_names.iter().map(|s| s.as_str()).collect();
-    assignment_names.push("Custom (advanced)");
+
+    // Other options
+    assignment_names.insert(0, "All assignments");
+    assignment_names.insert(1, "Custom (from URL)");
 
     let assignment_name = Select::new("Choose assignment:", assignment_names).prompt()?;
 
     // Custom assignment
-    if assignment_name == "Custom (advanced)" {
-        let course_id = Text::new("Enter course ID:").prompt()?;
-        let section_id = Text::new("Enter section ID:").prompt()?;
+    if assignment_name == "Custom (from URL)" {
+        let course_id = Text::new("Enter URL:").prompt()?;
 
-        let contents = client.get_contents(&course_id, &section_id).await;
+        let re = Regex::new(
+            r"(?<course_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})/section/(?<section_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})",
+        )
+        .unwrap();
 
-        // Check if error is 404
-        if let Err(e) = &contents {
-            if e.is_status() {
-                return Err("Course and/or section not found. Double-check that you have entered the correct IDs".into());
+        if let Some(captures) = re.captures(&course_id) {
+            let course_id = captures.name("course_id").unwrap().as_str();
+            let section_id = captures.name("section_id").unwrap().as_str();
+
+            let contents = client.get_contents(&course_id, &section_id).await;
+
+            // Check if error is 404
+            if let Err(e) = &contents {
+                if e.is_status() {
+                    return Err("Course and/or section not found. Double-check that you have entered a valid Seneca URL".into());
+                }
             }
+
+            println!("Solving custom assignment");
+
+            let contents = contents?;
+            for content in contents.as_array().unwrap() {
+                client.run_solver(&course_id, &section_id, content).await?;
+            }
+
+            return Ok(());
+        } else {
+            return Err("Invalid assignment URL. This URL should be in the format https://app.senecalearning.com/classroom/course/<course_id>/section/<section_id>/session".into());
+        }
+    } else if assignment_name == "All assignments" {
+        let assignments_len = assignments.len();
+
+        for (i, assignment) in assignments.iter().enumerate() {
+            println!(
+                "📝 Solving assignment: {}     {}/{assignments_len}",
+                assignment["name"].as_str().unwrap(),
+                i + 1,
+            );
+            solve_assignments(assignment, &client).await?;
         }
 
-        println!("Solving custom assignment");
-        
-        let contents = contents?;
-        for content in contents.as_array().unwrap() {
-            client.run_solver(&course_id, &section_id, content).await?;
-        }
+        println!("✅ All assignments are solved");
 
         return Ok(());
     }
@@ -92,16 +132,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .unwrap();
 
     println!(
-        "Solving assignment: {}",
+        "📝 Solving assignment: {}",
         assignment["name"].as_str().unwrap()
     );
 
-    solve_assignments(assignment, client).await
+    solve_assignments(assignment, &client).await
 }
 
 async fn solve_assignments<'a>(
     assignment: &Value,
-    client: SenecaClient<'_>,
+    client: &SenecaClient<'_>,
 ) -> Result<(), Box<dyn Error>> {
     let course_id = assignment["spec"]["courseId"].as_str().unwrap().to_string();
     let section_id_len = assignment["spec"]["sectionIds"].as_array().unwrap().len();
@@ -122,7 +162,7 @@ async fn solve_assignments<'a>(
 
     progress_bar.finish();
     println!(
-        "Assignment solved in {} seconds",
+        "⏱️  Assignment solved in {} seconds",
         progress_bar.elapsed().as_secs_f32()
     );
 

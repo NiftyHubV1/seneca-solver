@@ -4,6 +4,15 @@ A simple program that automatically solves your assignments in Seneca (and also 
 
 It should work on most assignments but probably will not complete every single one. This is due to the fact that not all question types are supported at the moment, although this is currently being worked on. In addition, it **will not work** on the AI-marked "Exam Questions" at the end of assignments. There is very little that can be done about that since that's marked on Seneca's servers.
 
+## Features
+
+- Automatically solves assignments
+- Works on most question types
+- Nice and intuitive terminal interface
+- Auto mode: solves all assignments
+- Semi-automatic mode: Select a specific assignment to solve
+- Manual mode: solve a specific sub-section of an assignment
+
 ## How to set up
 
 ### Method 1: Executable (recommended)
