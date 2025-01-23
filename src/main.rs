@@ -3,9 +3,9 @@ mod utils;
 
 use utils::{generate_assignment_string, read_clipboard};
 
-use inquire::{Password, PasswordDisplayMode, Select};
-use seneca_client::SenecaClient;
 use indicatif::ProgressBar;
+use inquire::{Password, PasswordDisplayMode, Select, Text};
+use seneca_client::SenecaClient;
 use serde_json::Value;
 use std::error::Error;
 
@@ -54,9 +54,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
             generate_assignment_string(assignment, longest_assignment_length, longest_status_length)
         })
         .collect();
-    let assignment_names: Vec<&str> = assignment_names.iter().map(|s| s.as_str()).collect();
+    let mut assignment_names: Vec<&str> = assignment_names.iter().map(|s| s.as_str()).collect();
+    assignment_names.push("Custom (advanced)");
 
     let assignment_name = Select::new("Choose assignment:", assignment_names).prompt()?;
+
+    // Custom assignment
+    if assignment_name == "Custom (advanced)" {
+        let course_id = Text::new("Enter course ID:").prompt()?;
+        let section_id = Text::new("Enter section ID:").prompt()?;
+
+        let contents = client.get_contents(&course_id, &section_id).await;
+
+        // Check if error is 404
+        if let Err(e) = &contents {
+            if e.is_status() {
+                return Err("Course and/or section not found. Double-check that you have entered the correct IDs".into());
+            }
+        }
+
+        println!("Solving custom assignment");
+        
+        let contents = contents?;
+        for content in contents.as_array().unwrap() {
+            client.run_solver(&course_id, &section_id, content).await?;
+        }
+
+        return Ok(());
+    }
 
     let assignment = assignments
         .iter()
@@ -66,11 +91,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
         .unwrap();
 
-    println!("Solving assignment: {}", assignment["name"].as_str().unwrap());
+    println!(
+        "Solving assignment: {}",
+        assignment["name"].as_str().unwrap()
+    );
 
-    solve_assignments(assignment, client).await?;
-
-    Ok(())
+    solve_assignments(assignment, client).await
 }
 
 async fn solve_assignments<'a>(
@@ -82,11 +108,7 @@ async fn solve_assignments<'a>(
 
     let progress_bar = ProgressBar::new(section_id_len as u64);
 
-    for section_id in assignment["spec"]["sectionIds"]
-        .as_array()
-        .unwrap()
-        .iter()
-    {
+    for section_id in assignment["spec"]["sectionIds"].as_array().unwrap().iter() {
         let section_id = section_id.as_str().unwrap();
         let contents = client.get_contents(&course_id, section_id).await?;
 
@@ -99,7 +121,10 @@ async fn solve_assignments<'a>(
     }
 
     progress_bar.finish();
-    println!("Assignment solved in {} seconds", progress_bar.elapsed().as_secs_f32());
+    println!(
+        "Assignment solved in {} seconds",
+        progress_bar.elapsed().as_secs_f32()
+    );
 
     Ok(())
 }

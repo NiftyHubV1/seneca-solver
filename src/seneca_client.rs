@@ -74,7 +74,7 @@ impl<'a> SenecaClient<'a> {
         &self,
         course_id: &str,
         section_id: &str,
-    ) -> Result<String, Box<dyn Error>> {
+    ) -> Result<String, reqwest::Error> {
         let url = format!(
             "https://course.app.senecalearning.com/api/courses/{}/signed-url?sectionId={}&contentTypes=standard,hardestQuestions",
             course_id, section_id
@@ -113,7 +113,7 @@ impl<'a> SenecaClient<'a> {
             let body = response.json::<Value>().await?;
             Ok(body["url"].as_str().unwrap().to_string())
         } else {
-            Err(Box::new(response.error_for_status().unwrap_err()))
+            Err(response.error_for_status().unwrap_err())
         }
     }
 
@@ -121,7 +121,7 @@ impl<'a> SenecaClient<'a> {
         &self,
         course_id: &str,
         section_id: &str,
-    ) -> Result<Value, Box<dyn Error>> {
+    ) -> Result<Value, reqwest::Error> {
         let url = self.get_signed_url(course_id, section_id).await?;
 
         let response = self.client.get(&url).send().await?;
@@ -130,7 +130,7 @@ impl<'a> SenecaClient<'a> {
             let body = response.json::<Value>().await?;
             Ok(body["contents"].clone())
         } else {
-            Err(Box::new(response.error_for_status().unwrap_err()))
+            Err(response.error_for_status().unwrap_err())
         }
     }
 
