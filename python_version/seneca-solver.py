@@ -265,7 +265,7 @@ def run_solver(course_id, section_id, content_id, user_id, access_key):
 
 
 def get_assignments(access_key):
-    time = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    time = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0) - datetime.timedelta(days=30)
 
     url = f"https://assignments.app.senecalearning.com/api/students/me/assignments?limit=500&date={requests.utils.quote(time.isoformat())}&archived=false"
 
