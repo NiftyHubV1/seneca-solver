@@ -8,7 +8,7 @@ It should work on most assignments but probably will not complete every single o
 
 ### Method 1: Executable (recommended)
 
-Download the executable from the releases page to the side, making sure to download the latest release. If on a UNIX-based system (i.e. not using Windows or TempleOS), add the execute permission to the executable using `chmod +x <name-of-executable>`. Move on to the "Usage" section below. If your OS/system architecture is unsupported, use Method 2.
+Download the executable from the [releases page](https://github.com/ArcaEge/seneca-solver/releases/latest), making sure to download the latest release. If on a UNIX-based system (i.e. not using Windows or TempleOS), add the execute permission to the executable using `chmod +x <name-of-executable>`. Move on to the "Usage" section below. If your OS/system architecture is unsupported, use Method 2.
 
 ### Method 2: Compile it yourself
 
