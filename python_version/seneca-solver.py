@@ -193,7 +193,7 @@ def run_solver(course_id, section_id, content_id, user_id, access_key):
         "userAnswer": {},
         "courseId": course_id,
         "sectionId": section_id,
-        "contentId": content_id,  # fill in
+        "contentId": content_id,
     }
 
     non_questions = 0

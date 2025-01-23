@@ -26,8 +26,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .trim()
     .to_string();
 
-    let client = SenecaClient::new(access_key);
-    println!("{}", client.get_user_id().await?);
+    let client = SenecaClient::new(&access_key).await?;
+    println!(
+        "{:#?}",
+        client
+            .run_solver(
+                "fe56ca00-05aa-11e8-9a61-01927559cfd5",
+                "2acb491d-50fa-49bc-9c79-e1b758a060ce",
+                "bd3c7711-7d1c-4574-a160-65fc12dd658b"
+            )
+            .await?
+    );
     // println!("nice key buddy! {}", access_key);
     // reqtest().await?;
     Ok(())
