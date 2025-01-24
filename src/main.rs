@@ -162,7 +162,7 @@ async fn solve_assignments<'a>(
 
     progress_bar.finish();
     println!(
-        "⏱️  Assignment solved in {} seconds",
+        "⏱️ Assignment solved in {} seconds",
         progress_bar.elapsed().as_secs_f32()
     );
 
