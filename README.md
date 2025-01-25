@@ -72,3 +72,9 @@ reqwest::Error { kind: Status(403) ... }
 ```
 
 You have been rate-limited by Seneca, wait for a few minutes and try again.
+
+## Disclaimer
+
+This program is not affiliated with Seneca Learning in any way - it's a third-party tool that impersonates the Seneca frontend. **Using this tool might be against Seneca's Terms of Service.** Use it at your own risk - I'm not responsible if you get in trouble for using this tool.
+
+In legal terms: The author of this program is not responsible for any consequences that may arise from using this tool.
