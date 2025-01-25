@@ -1,7 +1,7 @@
 mod seneca_client;
 mod utils;
 
-use utils::{generate_assignment_string, read_clipboard};
+use utils::{generate_assignment_string, input_or_clipboard};
 
 use chrono::{DateTime, Utc};
 use indicatif::ProgressBar;
@@ -13,27 +13,13 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Prompt for access key
-    let entered_key = if let Ok(entered_key) =
-        Password::new("Enter your access key (leave empty to use clipboard):")
+    // Read access key from clipboard if none was entered, then trim whitespace
+    let access_key = input_or_clipboard(
+        Password::new("Enter your access key (leave blank to use clipboard):")
             .without_confirmation()
             .with_display_mode(PasswordDisplayMode::Hidden)
-            .prompt()
-    {
-        entered_key
-    } else {
-        println!("");
-        return Err("Failed to read access key".into());
-    };
-
-    // Read access key from clipboard if none was entered, then trim whitespace
-    let access_key = if entered_key.is_empty() {
-        read_clipboard()
-    } else {
-        entered_key
-    }
-    .trim()
-    .to_string();
+            .prompt(),
+    )?;
 
     let client = SenecaClient::new(&access_key).await?;
     let assignments = client.get_assignments().await?;
@@ -73,70 +59,113 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let assignment_name = Select::new("Choose assignment:", assignment_names).prompt()?;
 
-    // Custom assignment
-    if assignment_name == "Custom (from URL)" {
-        let course_id = Text::new("Enter URL:").prompt()?;
+    match assignment_name {
+        "Custom (from URL)" => {
+            let course_id = input_or_clipboard(
+                Text::new("Enter URL of section (leave blank to use clipboard):").prompt(),
+            )?;
 
-        let re = Regex::new(
-            r"(?<course_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})/section/(?<section_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})",
-        )
-        .unwrap();
+            let re = Regex::new(r"(?<course_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})/section/(?<section_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})").unwrap();
 
-        if let Some(captures) = re.captures(&course_id) {
-            let course_id = captures.name("course_id").unwrap().as_str();
-            let section_id = captures.name("section_id").unwrap().as_str();
+            if let Some(captures) = re.captures(&course_id) {
+                let course_id = captures.name("course_id").unwrap().as_str();
+                let section_id = captures.name("section_id").unwrap().as_str();
 
-            let contents = client.get_contents(&course_id, &section_id).await;
+                let contents_tuple = client.get_contents(&course_id, &section_id).await;
 
-            // Check if error is 404
-            if let Err(e) = &contents {
-                if e.is_status() {
-                    return Err("Course and/or section not found. Double-check that you have entered a valid Seneca URL".into());
+                // Check if error is 404
+                if let Err(e) = &contents_tuple {
+                    if e.is_status() {
+                        return Err("Course and/or section not found. Double-check that you have entered a valid Seneca URL".into());
+                    }
                 }
+
+                let (index, title, contents) = contents_tuple?;
+                let contents = contents.as_array().unwrap();
+
+                println!("📝 Solving section: ");
+                println!(
+                    "🔍 Found {} subsection(s) in section {}: {}",
+                    contents.len(),
+                    index,
+                    title
+                );
+
+                if contents.len() > 1 {
+                    let content_names: Vec<String> = contents
+                        .iter()
+                        .map(|content| {
+                            content["tags"].as_array().unwrap()[0]
+                                .as_str()
+                                .unwrap()
+                                .to_string()
+                        })
+                        .collect();
+
+                    let content_name = Select::new("Choose subsection:", content_names).prompt()?;
+
+                    let content = contents
+                        .iter()
+                        .find(|content| {
+                            content["tags"].as_array().unwrap()[0]
+                                .as_str()
+                                .unwrap()
+                                .to_string() == content_name
+                        })
+                        .unwrap();
+
+                    // for content in contents {
+                    client.run_solver(&course_id, &section_id, content).await?;
+                    // }
+                } else {
+                    client
+                        .run_solver(&course_id, &section_id, &contents[0])
+                        .await?;
+                }
+
+                println!("✅ Subsection solved");
+
+                return Ok(());
+            } else {
+                return Err("Invalid assignment URL. This URL should be in the format https://app.senecalearning.com/classroom/course/<course_id>/section/<section_id>/session".into());
+            }
+        }
+        "All assignments" => {
+            let assignments_len = assignments.len();
+
+            for (i, assignment) in assignments.iter().enumerate() {
+                println!(
+                    "📝 Solving assignment: {}     {}/{assignments_len}",
+                    assignment["name"].as_str().unwrap(),
+                    i + 1,
+                );
+                solve_assignments(assignment, &client).await?;
             }
 
-            println!("Solving custom assignment");
-
-            let contents = contents?;
-            for content in contents.as_array().unwrap() {
-                client.run_solver(&course_id, &section_id, content).await?;
-            }
+            println!("✅ All assignments solved");
 
             return Ok(());
-        } else {
-            return Err("Invalid assignment URL. This URL should be in the format https://app.senecalearning.com/classroom/course/<course_id>/section/<section_id>/session".into());
         }
-    } else if assignment_name == "All assignments" {
-        let assignments_len = assignments.len();
+        _ => {
+            let assignment = assignments
+                .iter()
+                .find(|assignment| {
+                    generate_assignment_string(
+                        assignment,
+                        longest_assignment_length,
+                        longest_status_length,
+                    ) == assignment_name
+                })
+                .unwrap();
 
-        for (i, assignment) in assignments.iter().enumerate() {
             println!(
-                "📝 Solving assignment: {}     {}/{assignments_len}",
-                assignment["name"].as_str().unwrap(),
-                i + 1,
+                "📝 Solving assignment: {}",
+                assignment["name"].as_str().unwrap()
             );
-            solve_assignments(assignment, &client).await?;
+
+            solve_assignments(assignment, &client).await
         }
-
-        println!("✅ All assignments are solved");
-
-        return Ok(());
     }
-
-    let assignment = assignments
-        .iter()
-        .find(|assignment| {
-            generate_assignment_string(assignment, longest_assignment_length, longest_status_length)
-                == assignment_name
-        })
-        .unwrap();
-
-    println!(
-        "📝 Solving assignment: {}",
-        assignment["name"].as_str().unwrap()
-    );
-
-    solve_assignments(assignment, &client).await
 }
 
 async fn solve_assignments<'a>(
@@ -148,12 +177,15 @@ async fn solve_assignments<'a>(
 
     let progress_bar = ProgressBar::new(section_id_len as u64);
 
-    for section_id in assignment["spec"]["sectionIds"].as_array().unwrap().iter() {
+    for section_id in assignment["spec"]["sectionIds"].as_array().unwrap() {
         let section_id = section_id.as_str().unwrap();
-        let contents = client.get_contents(&course_id, section_id).await?;
+        let (_, _, contents) = client.get_contents(&course_id, section_id).await?;
+        let contents = contents.as_array().unwrap();
 
-        for content in contents.as_array().unwrap() {
-            client.run_solver(&course_id, section_id, content).await?;
+        for content in contents {
+            if let Err(e) = client.run_solver(&course_id, section_id, content).await {
+                eprintln!("Error running solver for section {}: {}", section_id, e);
+            }
         }
 
         // Increment progress bar

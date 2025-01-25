@@ -121,14 +121,14 @@ impl<'a> SenecaClient<'a> {
         &self,
         course_id: &str,
         section_id: &str,
-    ) -> Result<Value, reqwest::Error> {
+    ) -> Result<(String, String, Value), reqwest::Error> {
         let url = self.get_signed_url(course_id, section_id).await?;
 
         let response = self.client.get(&url).send().await?;
 
         if response.status().is_success() {
             let body = response.json::<Value>().await?;
-            Ok(body["contents"].clone())
+            Ok((body["number"].as_str().unwrap_or("").to_string(), body["title"].as_str().unwrap_or("").to_string(), body["contents"].clone()))
         } else {
             Err(response.error_for_status().unwrap_err())
         }
@@ -187,7 +187,7 @@ impl<'a> SenecaClient<'a> {
                 "modulesTested": content_modules_len,
                 "sessionType": "adaptive",
                 "sectionIds": [&section_id],
-                "contentIds": [],
+                "contentIds": [content_id],
                 "options": {
                     "hasHardestQuestionContent": if let Some(content_type) = content["contentType"].as_str() {
                         content_type == "hardestQuestions"

@@ -1,7 +1,9 @@
 use chrono::DateTime;
 use copypasta::{ClipboardContext, ClipboardProvider};
+use inquire::InquireError;
 use rand::Rng;
 use serde_json::Value;
+use std::error::Error;
 
 pub fn read_clipboard() -> String {
     let mut clipboard_context = ClipboardContext::new().unwrap();
@@ -36,5 +38,28 @@ pub fn generate_assignment_string(
     let padding_assignment = " ".repeat(longest_assignment_length - name.len());
     let padding_status = " ".repeat(longest_status_length - status.len());
 
-    format!("{}{}   {}{}  Due: {} (UTC)", name, padding_assignment, status, padding_status, due)
+    format!(
+        "{}{}   {}{}  Due: {} (UTC)",
+        name, padding_assignment, status, padding_status, due
+    )
+}
+
+pub fn input_or_clipboard(
+    user_input: Result<String, InquireError>,
+) -> Result<String, Box<dyn Error>> {
+    let input = if let Ok(input) = user_input {
+        input
+    } else {
+        println!("");
+        return Err("Failed to read input".into());
+    };
+
+    // Read input from clipboard if none was entered, then trim whitespace
+    Ok(if input.is_empty() {
+        read_clipboard()
+    } else {
+        input
+    }
+    .trim()
+    .to_string())
 }
