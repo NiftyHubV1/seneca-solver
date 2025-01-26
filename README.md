@@ -20,7 +20,16 @@ It should work on most assignments but probably will not complete every single o
 > [!NOTE]
 > If you are using Windows, you may get a warning from Windows Defender SmartScreen when running the executable. This is because the executable is not signed. You can safely ignore this warning by clicking "More info" and then "Run anyway".
 
-Download the executable from the [releases page](https://github.com/ArcaEge/seneca-solver/releases/latest), making sure to download the latest release. If on a UNIX-based system (i.e. not using Windows or TempleOS), add the execute permission to the executable using `chmod +x <name-of-executable>`. Move on to the "Usage" section below. If your OS/system architecture is unsupported, use Method 2.
+Download the executable from the links below. Alternatively, download from the [releases page](https://github.com/ArcaEge/seneca-solver/releases/latest), making sure to download the latest release.
+
+| System             | File                               |
+| ------------------ | ---------------------------------- |
+| 64-bit x86 Windows | [`seneca-solver_windows-x86_64.exe`](https://github.com/ArcaEge/seneca-solver/releases/latest/download/seneca-solver_windows-x86_64.exe) |
+| 64-bit x86 macOS   | [`seneca-solver_macos-x86_64`](https://github.com/ArcaEge/seneca-solver/releases/latest/download/seneca-solver_macos-x86_64) |
+| M-series ARM macOS | [`seneca-solver_macos-aarch64`](https://github.com/ArcaEge/seneca-solver/releases/latest/download/seneca-solver_macos-aarch64) |
+| 64-bit x86 Linux   | [`seneca-solver_linux-x86_64`](https://github.com/ArcaEge/seneca-solver/releases/latest/download/seneca-solver_linux-x86_64) |
+
+If on a UNIX-based system (i.e. Linux or macOS), add the execute permission to the executable using `chmod +x <name-of-executable>`. Move on to the "Usage" section below. If your OS/system architecture is unsupported, use Method 2.
 
 ### Method 2: Compile it yourself
 
