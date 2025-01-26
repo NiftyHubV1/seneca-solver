@@ -64,7 +64,7 @@ impl<'a> SenecaClient<'a> {
             Ok(body["userId"].as_str().unwrap().to_string())
         } else {
             if response.status() == 401 {
-                eprintln!("Invalid access key. Double-check that you copied it correctly and that it hasn't expired. For more information, see https://github.com/ArcaEge/seneca-solver#expired-access-key");
+                eprintln!("🚧 Invalid access key. Double-check that you copied it correctly and that it hasn't expired. For more information, see https://github.com/ArcaEge/seneca-solver#expired-access-key");
             }
             Err(Box::new(response.error_for_status().unwrap_err()))
         }
@@ -340,7 +340,14 @@ impl<'a> SenecaClient<'a> {
                 .unwrap()
                 .to_vec())
         } else {
-            Err(Box::new(response.error_for_status().unwrap_err()))
+            if let Err(err) = response.error_for_status() {
+                Err(Box::new(err))
+            } else {
+                Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to fetch assignments",
+                )))
+            }
         }
     }
 

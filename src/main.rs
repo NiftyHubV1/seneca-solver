@@ -5,7 +5,7 @@ use utils::{generate_assignment_string, input_or_clipboard};
 
 use chrono::{DateTime, Utc};
 use indicatif::ProgressBar;
-use inquire::{Password, PasswordDisplayMode, Select, Text};
+use inquire::{Confirm, Password, PasswordDisplayMode, Select, Text};
 use regex::Regex;
 use seneca_client::SenecaClient;
 use serde_json::Value;
@@ -13,16 +13,63 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    // Read access key from clipboard if none was entered, then trim whitespace
-    let access_key = input_or_clipboard(
-        Password::new("Enter your access key (leave blank to use clipboard):")
-            .without_confirmation()
-            .with_display_mode(PasswordDisplayMode::Hidden)
-            .prompt(),
-    )?;
+    let mut access_key: String;
 
-    let client = SenecaClient::new(&access_key).await?;
-    let assignments = client.get_assignments().await?;
+    let client: SenecaClient<'_> = loop {
+        // Read access key from clipboard if none was entered, then trim whitespace
+        access_key = input_or_clipboard(
+            Password::new("Enter your access key:")
+                .with_help_message(
+                    "The key will be hidden in the prompt. Leave blank to use clipboard",
+                )
+                .without_confirmation()
+                .with_display_mode(PasswordDisplayMode::Hidden)
+                .prompt(),
+        )?;
+
+        let client = SenecaClient::new(&access_key).await;
+        if client.is_ok() {
+            break client.unwrap();
+        }
+        println!("💡 Tip: Press Ctrl+C to exit");
+        println!();
+    };
+
+    loop {
+        let result = assignment_loop(&client).await;
+
+        if result.is_err() {
+            eprintln!("🚨 Error: {}\n", result.err().unwrap());
+        }
+
+        let repeat = Confirm::new("Would you like to run the solver again?")
+            .with_default(false)
+            .prompt();
+
+        match repeat {
+            Ok(true) => println!("🔄 Restarting solver\n"),
+            Ok(false) => {
+                println!("Exiting solver");
+                break Ok(());
+            }
+            Err(_) => return Err("Invalid input".into()),
+        }
+    }
+}
+
+async fn assignment_loop(client: &SenecaClient<'_>) -> Result<(), Box<dyn Error>> {
+    let assignments = client.get_assignments().await;
+    let assignments = match assignments {
+        Ok(assignments) => {
+            println!("📬 Fetched assignments");
+            Ok(assignments)
+        }
+        Err(e) => {
+            eprintln!("❌ Error fetching assignments due to an unknown error. This error is not caused by an incorrect access key.
+Please report the following error at https://github.com/ArcaEge/seneca-solver/issues");
+            Err(e)
+        }
+    }?;
 
     // Filter out assignments that have not started yet
     let now = Utc::now();
@@ -60,78 +107,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let assignment_name = Select::new("Choose assignment:", assignment_names).prompt()?;
 
     match assignment_name {
-        "Custom (from URL)" => {
-            let course_id = input_or_clipboard(
-                Text::new("Enter URL of section (leave blank to use clipboard):").prompt(),
-            )?;
-
-            let re = Regex::new(r"(?<course_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})/section/(?<section_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})").unwrap();
-
-            if let Some(captures) = re.captures(&course_id) {
-                let course_id = captures.name("course_id").unwrap().as_str();
-                let section_id = captures.name("section_id").unwrap().as_str();
-
-                let contents_tuple = client.get_contents(&course_id, &section_id).await;
-
-                // Check if error is 404
-                if let Err(e) = &contents_tuple {
-                    if e.is_status() {
-                        return Err("Course and/or section not found. Double-check that you have entered a valid Seneca URL".into());
-                    }
-                }
-
-                let (index, title, contents) = contents_tuple?;
-                let contents = contents.as_array().unwrap();
-
-                println!("📝 Solving section: ");
-                println!(
-                    "🔍 Found {} subsection(s) in section {}: {}",
-                    contents.len(),
-                    index,
-                    title
-                );
-
-                if contents.len() > 1 {
-                    let content_names: Vec<String> = contents
-                        .iter()
-                        .map(|content| {
-                            content["tags"].as_array().unwrap()[0]
-                                .as_str()
-                                .unwrap()
-                                .to_string()
-                        })
-                        .collect();
-
-                    let content_name = Select::new("Choose subsection:", content_names).prompt()?;
-
-                    let content = contents
-                        .iter()
-                        .find(|content| {
-                            content["tags"].as_array().unwrap()[0]
-                                .as_str()
-                                .unwrap()
-                                .to_string() == content_name
-                        })
-                        .unwrap();
-
-                    // for content in contents {
-                    client.run_solver(&course_id, &section_id, content).await?;
-                    // }
-                } else {
-                    client
-                        .run_solver(&course_id, &section_id, &contents[0])
-                        .await?;
-                }
-
-                println!("✅ Subsection solved");
-
-                return Ok(());
-            } else {
-                return Err("Invalid assignment URL. This URL should be in the format https://app.senecalearning.com/classroom/course/<course_id>/section/<section_id>/session".into());
-            }
-        }
+        "Custom (from URL)" => solve_custom(&client).await,
         "All assignments" => {
             let assignments_len = assignments.len();
+
+            println!("🚀 Solving {} assignment(s)", assignments_len);
 
             for (i, assignment) in assignments.iter().enumerate() {
                 println!(
@@ -144,7 +124,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             println!("✅ All assignments solved");
 
-            return Ok(());
+            Ok(())
         }
         _ => {
             let assignment = assignments
@@ -199,4 +179,78 @@ async fn solve_assignments<'a>(
     );
 
     Ok(())
+}
+
+async fn solve_custom(client: &SenecaClient<'_>) -> Result<(), Box<dyn Error>> {
+    let course_id = input_or_clipboard(
+        Text::new("Enter URL of section:")
+            .with_help_message("Leave blank to use clipboard")
+            .prompt(),
+    )?;
+
+    let re = Regex::new(r"(?<course_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})/section/(?<section_id>\w{8}-\w{4}-\w{4}-\w{4}-\w{12})").unwrap();
+
+    if let Some(captures) = re.captures(&course_id) {
+        let course_id = captures.name("course_id").unwrap().as_str();
+        let section_id = captures.name("section_id").unwrap().as_str();
+
+        let contents_tuple = client.get_contents(&course_id, &section_id).await;
+
+        // Check if error is 404
+        if let Err(e) = &contents_tuple {
+            if e.is_status() {
+                return Err("Course and/or section not found. Double-check that you have entered a valid Seneca URL".into());
+            }
+        }
+
+        let (index, title, contents) = contents_tuple?;
+        let contents = contents.as_array().unwrap();
+
+        println!("📝 Solving section: ");
+        println!(
+            "🔍 Found {} subsection(s) in section {}: {}",
+            contents.len(),
+            index,
+            title
+        );
+
+        if contents.len() > 1 {
+            let content_names: Vec<String> = contents
+                .iter()
+                .map(|content| {
+                    content["tags"].as_array().unwrap()[0]
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                })
+                .collect();
+
+            let content_name = Select::new("Choose subsection:", content_names).prompt()?;
+
+            let content = contents
+                .iter()
+                .find(|content| {
+                    content["tags"].as_array().unwrap()[0]
+                        .as_str()
+                        .unwrap()
+                        .to_string()
+                        == content_name
+                })
+                .unwrap();
+
+            // for content in contents {
+            client.run_solver(&course_id, &section_id, content).await?;
+            // }
+        } else {
+            client
+                .run_solver(&course_id, &section_id, &contents[0])
+                .await?;
+        }
+
+        println!("✅ Subsection solved");
+
+        Ok(())
+    } else {
+        Err("Invalid assignment URL. This URL should be in the format https://app.senecalearning.com/classroom/course/<course_id>/section/<section_id>/session".into())
+    }
 }
