@@ -1,4 +1,4 @@
-use chrono::DateTime;
+use chrono::{DateTime, Duration, Utc};
 use copypasta::{ClipboardContext, ClipboardProvider};
 use inquire::InquireError;
 use rand::Rng;
@@ -62,4 +62,26 @@ pub fn input_or_clipboard(
     }
     .trim()
     .to_string())
+}
+
+// Generates a random duration within a range
+pub fn generate_random_duration(min: Duration, max: Duration) -> Duration {
+    let mut rng = rand::thread_rng();
+    let variance = Duration::seconds(rng.gen_range(-max.num_seconds()..max.num_seconds()));
+    min + variance
+}
+
+pub fn generate_time_vec(end: DateTime<Utc>, min: Duration, max: Duration, count: usize) -> (DateTime<Utc>, Vec<DateTime<Utc>>) {
+    let mut time_vec = vec![];
+    let mut start_time = end;
+
+    for _ in 0..count {
+        let duration = generate_random_duration(min, max);
+        start_time -= duration;
+        time_vec.push(start_time);
+    }
+
+    time_vec.push(end);
+
+    (start_time, time_vec)
 }

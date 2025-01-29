@@ -1,4 +1,4 @@
-use crate::utils::generate_hex_string;
+use crate::utils::{generate_hex_string, generate_time_vec};
 
 use chrono::{prelude::*, Duration};
 use url::form_urlencoded::byte_serialize;
@@ -150,16 +150,15 @@ impl<'a> SenecaClient<'a> {
             generate_hex_string(2),
             generate_hex_string(6)
         );
-
-        let now = Utc::now();
-        let started = now - Duration::minutes(2);
-        let started_module = now - Duration::seconds(15);
         
         let non_question_module_types = vec!["concept", "video", "image", "delve"];
-
+        
         let content_modules = content["contentModules"].as_array().unwrap();
         let content_modules_len = content_modules.len();
 
+        let now = Utc::now();
+        let (started, module_times) = generate_time_vec(now, Duration::seconds(7), Duration::seconds(30), content_modules_len);
+        
         let mut modules = Vec::<Value>::new();
 
         let mut data = json!({
@@ -203,8 +202,8 @@ impl<'a> SenecaClient<'a> {
             "sessionId": session_id,
             "moduleOrder": 0,
             "moduleId": "",
-            "timeStarted": started_module.to_rfc3339_opts(SecondsFormat::Secs, false),
-            "timeFinished": now.to_rfc3339_opts(SecondsFormat::Secs, false),
+            "timeStarted": "",
+            "timeFinished": "",
             "gaveUp": false,
             "submitted": true,
             "completed": true,
@@ -222,14 +221,21 @@ impl<'a> SenecaClient<'a> {
 
         let mut non_questions: u64 = 0;
 
+        // Loop over every content module
         for (content_module_no, content_module) in content_modules.iter().enumerate() {
             let content_module = content_module.as_object().unwrap();
+
+            let started_module = module_times[content_module_no];
+            let finished_module = module_times[content_module_no + 1];
 
             let mut module = module_template.clone();
             module["moduleOrder"] = json!(content_module_no);
             module["moduleId"] = json!(content_module["id"].as_str().unwrap());
             module["moduleType"] = json!(content_module["moduleType"].as_str().unwrap());
-
+            module["timeStarted"] = json!(started_module.to_rfc3339_opts(SecondsFormat::Secs, false));
+            module["timeFinished"] = json!(finished_module.to_rfc3339_opts(SecondsFormat::Secs, false));
+            
+            // Special handling for non-question modules
             if non_question_module_types.contains(&content_module["moduleType"].as_str().unwrap()) {
                 module["submitted"] = json!(false);
                 module["testingActive"] = json!(false);
