@@ -1,42 +1,43 @@
 mod seneca_client;
 mod utils;
 
-use utils::{generate_assignment_string, input_or_clipboard};
+use seneca_client::SenecaClient;
+use utils::{generate_assignment_string, input_or_clipboard, parse_keys_file, pause};
 
 use chrono::{DateTime, Utc};
 use indicatif::ProgressBar;
-use inquire::{Confirm, Password, PasswordDisplayMode, Select, Text};
+use inquire::{Confirm, Select, Text};
 use regex::Regex;
-use seneca_client::SenecaClient;
 use serde_json::Value;
 use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let mut access_key: String;
-
-    let client: SenecaClient<'_> = loop {
-        // Read access key from clipboard if none was entered, then trim whitespace
-        access_key = input_or_clipboard(
-            Password::new("Enter your access key:")
-                .with_help_message(
-                    "The key will be hidden in the prompt. Leave blank to use clipboard",
-                )
-                .without_confirmation()
-                .with_display_mode(PasswordDisplayMode::Hidden)
-                .prompt(),
-        )?;
-
-        let client = SenecaClient::new(&access_key).await;
-        if client.is_ok() {
-            break client.unwrap();
+    let (api_key, refresh_token) = match parse_keys_file() {
+        Ok(keys) => keys,
+        Err(e) => {
+            eprintln!("❌ Error reading seneca-solver-keys.json: {}", e);
+            eprintln!("This error is likely caused by a nonexistent or invalid seneca-solver-keys.json file. Ensure it is placed in the same folder as this program and/or try re-creating it.");
+            pause();
+            return Err(e);
         }
-        println!("💡 Tip: Press Ctrl+C to exit");
-        println!();
+    };
+
+    let mut client = match SenecaClient::new(api_key, refresh_token).await {
+        Ok(client) => {
+            println!("🔑 Successfully authenticated with Seneca");
+            client
+        }
+        Err(e) => {
+            eprintln!("❌ Error authenticating with Seneca: {}", e);
+            eprintln!("This error is likely caused by an invalid seneca-solver-keys.json file. Try re-creating that file.");
+            pause();
+            return Err(e);
+        }
     };
 
     loop {
-        let result = assignment_loop(&client).await;
+        let result = assignment_loop(&mut client).await;
 
         if result.is_err() {
             eprintln!("🚨 Error: {}\n", result.err().unwrap());
@@ -57,7 +58,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-async fn assignment_loop(client: &SenecaClient<'_>) -> Result<(), Box<dyn Error>> {
+async fn assignment_loop(client: &mut SenecaClient) -> Result<(), Box<dyn Error>> {
     let assignments = client.get_assignments().await;
     let assignments = match assignments {
         Ok(assignments) => {
@@ -79,6 +80,16 @@ Please report the following error at https://github.com/ArcaEge/seneca-solver/is
             DateTime::parse_from_rfc3339(assignment["startDate"].as_str().unwrap()).unwrap() <= now
         })
         .collect();
+
+    if std::env::args()
+        .collect::<Vec<String>>()
+        .contains(&"--xp-farm".to_string())
+    {
+        println!("🚜 Running in XP farm mode");
+        loop {
+            solve_all_assignments(client, &assignments).await?;
+        };
+    }
 
     // Find longest assignment name and longest status to use for padding
     let longest_assignment_length = assignments
@@ -107,25 +118,8 @@ Please report the following error at https://github.com/ArcaEge/seneca-solver/is
     let assignment_name = Select::new("Choose assignment:", assignment_names).prompt()?;
 
     match assignment_name {
-        "Custom (from URL)" => solve_custom(&client).await,
-        "All assignments" => {
-            let assignments_len = assignments.len();
-
-            println!("🚀 Solving {} assignment(s)", assignments_len);
-
-            for (i, assignment) in assignments.iter().enumerate() {
-                println!(
-                    "📝 Solving assignment: {}     {}/{assignments_len}",
-                    assignment["name"].as_str().unwrap(),
-                    i + 1,
-                );
-                solve_assignments(assignment, &client).await?;
-            }
-
-            println!("✅ All assignments solved");
-
-            Ok(())
-        }
+        "Custom (from URL)" => solve_custom(client).await,
+        "All assignments" => solve_all_assignments(client, &assignments).await,
         _ => {
             let assignment = assignments
                 .iter()
@@ -143,14 +137,14 @@ Please report the following error at https://github.com/ArcaEge/seneca-solver/is
                 assignment["name"].as_str().unwrap()
             );
 
-            solve_assignments(assignment, &client).await
+            solve_assignments(assignment, client).await
         }
     }
 }
 
-async fn solve_assignments<'a>(
+async fn solve_assignments(
     assignment: &Value,
-    client: &SenecaClient<'_>,
+    client: &mut SenecaClient,
 ) -> Result<(), Box<dyn Error>> {
     let course_id = assignment["spec"]["courseId"].as_str().unwrap().to_string();
     let section_id_len = assignment["spec"]["sectionIds"].as_array().unwrap().len();
@@ -181,7 +175,7 @@ async fn solve_assignments<'a>(
     Ok(())
 }
 
-async fn solve_custom(client: &SenecaClient<'_>) -> Result<(), Box<dyn Error>> {
+async fn solve_custom(client: &mut SenecaClient) -> Result<(), Box<dyn Error>> {
     let course_id = input_or_clipboard(
         Text::new("Enter URL of section:")
             .with_help_message("Leave blank to use clipboard")
@@ -198,8 +192,10 @@ async fn solve_custom(client: &SenecaClient<'_>) -> Result<(), Box<dyn Error>> {
 
         // Check if error is 404
         if let Err(e) = &contents_tuple {
-            if e.is_status() {
-                return Err("Course and/or section not found. Double-check that you have entered a valid Seneca URL".into());
+            if let Some(reqwest_error) = e.downcast_ref::<reqwest::Error>() {
+                if reqwest_error.is_status() {
+                    return Err("Course and/or section not found. Double-check that you have entered a valid Seneca URL".into());
+                }
             }
         }
 
@@ -253,4 +249,26 @@ async fn solve_custom(client: &SenecaClient<'_>) -> Result<(), Box<dyn Error>> {
     } else {
         Err("Invalid assignment URL. This URL should be in the format https://app.senecalearning.com/classroom/course/<course_id>/section/<section_id>/session".into())
     }
+}
+
+async fn solve_all_assignments(
+    client: &mut SenecaClient,
+    assignments: &Vec<&Value>,
+) -> Result<(), Box<dyn Error>> {
+    let assignments_len = assignments.len();
+
+    println!("🚀 Solving {} assignment(s)", assignments_len);
+
+    for (i, assignment) in assignments.iter().enumerate() {
+        println!(
+            "📝 Solving assignment: {}     {}/{assignments_len}",
+            assignment["name"].as_str().unwrap(),
+            i + 1,
+        );
+        solve_assignments(assignment, client).await?;
+    }
+
+    println!("✅ All assignments solved");
+
+    Ok(())
 }

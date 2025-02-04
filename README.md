@@ -47,32 +47,26 @@ You must have the following installed:
 
 ## How to use
 
-1. Run the executable. If you ran it from your file manager, it should've spawned a terminal window.
-
-1. At this point it should be asking for an access key. Here's how to obtain one:
+1. You need to generate a `seneca-solver-keys.json` file that contains your API key and refresh token. Here's how to do that:
     1. Go to the Seneca dashboard page in your browser and open the inspect menu.
-    1. Navigate to the Network tab.
-    1. Reload the page. Requests should start appearing in the Network tab.
-    1. There should be a filter bar to filter the URLs. Type `authentication.app.senecalearning.com` into the filter bar.
-    ![Image showing what this should look like](docs/images/network_filter.png)
-    1. Select the latest `POST` request displayed (example: selected request in image above) to view its headers.
-    1. In the info panel that opens, scroll down to "Request Headers". This might have a different name in your browser.
-    1. Copy the value of the HTTP header named `access-key` (making sure to copy the whole thing) and paste it into the script. **Note:** Some browsers (mainly Firefox-based ones at the time of writing) truncate the access key in the middle since it is very long. Right click it and click copy instead of selecting everything and copying.
-    ![Image showing what this should look like](docs/images/network_access_key.png)
+    1. Navigate to the Console tab.
+    1. Paste in the contents of the [key_extractor.js](key_extractor.js) file into the console and press enter to run it.
+        > [!NOTE]
+        > Most browsers will show a warning like this if you haven't pasted anything into a browser console before:
+        > ![Warning: Don’t paste code into the DevTools Console that you don’t understand or haven’t reviewed yourself. This could allow attackers to steal your identity or take control of your computer. Please type ‘allow pasting’ below and hit Enter to allow pasting.](docs/images/allow_pasting.png)
+        >
+        > To bypass this, simply type in `allow pasting` and press enter as it says in the message.
+    1. This will then generate and download the `seneca-solver-keys.json` file. All you need to do now is copy this file to the same folder as the `seneca-solver` executable.
+        > [!WARN]
+        > Do not share this generated file with anyone, otherwise they can access everything in your Seneca account.
+
+1. Run the executable. If you ran it from your file manager, it should've spawned a terminal window.
 
 1. Your assignments will be printed to the terminal. Use the arrow keys to navigate between them. Press `Enter` to start solving an assignment.
 
 1. The script should now start solving the assignment, which may take 5 or more minutes depending on its length. **It will likely not manage to solve all sections of the assignment** - this is a bug that is being worked on. Use the `Custom (URL)` mode and manually paste in the URLs of the sections. Also note that your access key will expire every hour, meaning you will need to repeat the process to obtain the key every hour. Using refresh tokens instead of access keys is on the To Do list.
 
 ## Troubleshooting/common errors
-
-### Expired access key
-
-``` rust
-reqwest::Error { kind: Status(401) ... }
-```
-
-Your access key has expired, obtain a new one.
 
 ### Ratelimit
 

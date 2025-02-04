@@ -1,6 +1,8 @@
 build/
 dist/
 
+/seneca-solver-keys.json
+
 # Added by cargo
 
 /target

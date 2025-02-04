@@ -3,139 +3,198 @@ use crate::utils::{generate_hex_string, generate_time_vec};
 use chrono::{prelude::*, Duration};
 use url::form_urlencoded::byte_serialize;
 use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use std::error::Error;
 
-pub struct SenecaClient<'a> {
+pub struct SenecaClient {
     client: Client,
-    access_key: &'a str,
+    api_key: String,
+    refresh_token: String,
+    access_key: String,
     pub user_id: String,
 }
 
-impl<'a> SenecaClient<'a> {
-    pub async fn new(access_key: &'a str) -> Result<Self, Box<dyn Error>> {
+impl SenecaClient {
+    pub async fn new(api_key: String, refresh_token: String) -> Result<Self, Box<dyn Error>> {
         let client = Client::new();
 
         let mut self_to_return = Self {
             client,
-            access_key,
+            api_key,
+            refresh_token,
+            access_key: String::new(),
             user_id: String::new(),
         };
 
-        self_to_return.user_id = Self::get_user_id(&self_to_return).await?;
+        self_to_return.access_key = self_to_return.get_access_key().await?;
+        self_to_return.user_id = Self::get_user_id(&mut self_to_return).await?;
         Ok(self_to_return)
     }
 
-    async fn get_user_id(&self) -> Result<String, Box<dyn Error>> {
-        let url = "https://user-info.app.senecalearning.com/api/user-info/me";
+    async fn get_access_key(&self) -> Result<String, Box<dyn Error>> {
+        let url = format!("https://securetoken.googleapis.com/v1/token?key={}", self.api_key);
 
-        let headers: HeaderMap = Self::assemble_headers(vec![
-            ("Host", "user-info.app.senecalearning.com"),
-            (
-                "User-Agent",
-                "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
-            ),
-            ("Accept", "*/*"),
-            ("Accept-Language", "en-GB,en;q=0.5"),
-            ("Accept-Encoding", "gzip, deflate, br, zstd"),
-            ("Referer", "https://app.senecalearning.com/"),
-            ("access-key", &self.access_key),
-            ("Content-Type", "application/json"),
-            (
-                "correlationId",
-                "1737330516472::76115c42-02c9-4d56-0000-000000000000",
-            ),
-            ("user-region", "GB"),
-            ("Origin", "https://app.senecalearning.com"),
-            ("DNT", "1"),
-            ("Sec-GPC", "1"),
-            ("Sec-Fetch-Dest", "empty"),
-            ("Sec-Fetch-Mode", "cors"),
-            ("Sec-Fetch-Site", "same-site"),
-            ("Connection", "keep-alive"),
-            ("host", "user-info.app.senecalearning.com"),
-        ]);
+        let body = json!({
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+        });
 
-        let response = self.client.get(url).headers(headers).send().await?;
+        let response = self.client.post(url).json(&body).send().await?;
 
         if response.status().is_success() {
             let body = response.json::<Value>().await?;
-            Ok(body["userId"].as_str().unwrap().to_string())
+            Ok(body["access_token"].as_str().unwrap().to_string())
         } else {
-            if response.status() == 401 {
-                eprintln!("🚧 Invalid access key. Double-check that you copied it correctly and that it hasn't expired. For more information, see https://github.com/ArcaEge/seneca-solver#expired-access-key");
+            if response.status() == 400 {
+                eprintln!("🚧 Invalid refresh token or API key");
             }
             Err(Box::new(response.error_for_status().unwrap_err()))
         }
     }
 
+    async fn get_user_id(&mut self) -> Result<String, Box<dyn Error>> {
+        let url = "https://user-info.app.senecalearning.com/api/user-info/me";
+        
+        let mut has_refreshed = false;
+        loop {
+            let headers: HeaderMap = Self::assemble_headers(vec![
+                ("Host", "user-info.app.senecalearning.com"),
+                (
+                    "User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
+                ),
+                ("Accept", "*/*"),
+                ("Accept-Language", "en-GB,en;q=0.5"),
+                ("Accept-Encoding", "gzip, deflate, br, zstd"),
+                ("Referer", "https://app.senecalearning.com/"),
+                ("access-key", &self.access_key),
+                ("Content-Type", "application/json"),
+                (
+                    "correlationId",
+                    "1737330516472::76115c42-02c9-4d56-0000-000000000000",
+                ),
+                ("user-region", "GB"),
+                ("Origin", "https://app.senecalearning.com"),
+                ("DNT", "1"),
+                ("Sec-GPC", "1"),
+                ("Sec-Fetch-Dest", "empty"),
+                ("Sec-Fetch-Mode", "cors"),
+                ("Sec-Fetch-Site", "same-site"),
+                ("Connection", "keep-alive"),
+                ("host", "user-info.app.senecalearning.com"),
+            ]);
+
+            let response = self.client.get(url).headers(headers).send().await?;
+
+            if response.status().is_success() {
+                let body = response.json::<Value>().await?;
+                break Ok(body["userId"].as_str().unwrap().to_string());
+            } else {
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    if has_refreshed {
+                        eprintln!("🚧 Invalid access key");
+                        break Err(Box::new(response.error_for_status().unwrap_err()));
+                    }
+                    self.access_key = self.get_access_key().await?;
+                    has_refreshed = true;
+                    continue;
+                }
+                break Err(Box::new(response.error_for_status().unwrap_err()));
+            }
+        }
+    }
+
     async fn get_signed_url(
-        &self,
+        &mut self,
         course_id: &str,
         section_id: &str,
-    ) -> Result<String, reqwest::Error> {
+    ) -> Result<String, Box<dyn Error>> {
         let url = format!(
             "https://course.app.senecalearning.com/api/courses/{}/signed-url?sectionId={}&contentTypes=standard,hardestQuestions",
             course_id, section_id
         );
 
-        let headers: HeaderMap = Self::assemble_headers(vec![
-            ("Host", "course.app.senecalearning.com"),
-            (
-                "User-Agent",
-                "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
-            ),
-            ("Accept", "*/*"),
-            ("Accept-Language", "en-GB,en;q=0.5"),
-            ("Accept-Encoding", "gzip, deflate, br, zstd"),
-            ("Referer", "https://app.senecalearning.com/"),
-            ("access-key", &self.access_key),
-            ("Content-Type", "application/json"),
-            (
-                "correlationId",
-                "1737330516472::76115c42-02c9-4d56-0000-000000000000",
-            ),
-            ("user-region", "GB"),
-            ("Origin", "https://app.senecalearning.com"),
-            ("DNT", "1"),
-            ("Sec-GPC", "1"),
-            ("Sec-Fetch-Dest", "empty"),
-            ("Sec-Fetch-Mode", "cors"),
-            ("Sec-Fetch-Site", "same-site"),
-            ("Connection", "keep-alive"),
-            ("host", "course.app.senecalearning.com"),
-        ]);
+        let mut has_refreshed = false;
+        loop {
+            let headers: HeaderMap = Self::assemble_headers(vec![
+                ("Host", "course.app.senecalearning.com"),
+                (
+                    "User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
+                ),
+                ("Accept", "*/*"),
+                ("Accept-Language", "en-GB,en;q=0.5"),
+                ("Accept-Encoding", "gzip, deflate, br, zstd"),
+                ("Referer", "https://app.senecalearning.com/"),
+                ("access-key", &self.access_key),
+                ("Content-Type", "application/json"),
+                (
+                    "correlationId",
+                    "1737330516472::76115c42-02c9-4d56-0000-000000000000",
+                ),
+                ("user-region", "GB"),
+                ("Origin", "https://app.senecalearning.com"),
+                ("DNT", "1"),
+                ("Sec-GPC", "1"),
+                ("Sec-Fetch-Dest", "empty"),
+                ("Sec-Fetch-Mode", "cors"),
+                ("Sec-Fetch-Site", "same-site"),
+                ("Connection", "keep-alive"),
+                ("host", "course.app.senecalearning.com"),
+            ]);
 
-        let response = self.client.get(&url).headers(headers).send().await?;
+            let response = self.client.get(&url).headers(headers).send().await?;
 
-        if response.status().is_success() {
-            let body = response.json::<Value>().await?;
-            Ok(body["url"].as_str().unwrap().to_string())
-        } else {
-            Err(response.error_for_status().unwrap_err())
+            if response.status().is_success() {
+                let body = response.json::<Value>().await?;
+                break Ok(body["url"].as_str().unwrap().to_string())
+            } else {
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    if has_refreshed {
+                        eprintln!("🚧 Invalid access key");
+                        break Err(Box::new(response.error_for_status().unwrap_err()));
+                    }
+                    self.access_key = self.get_access_key().await?;
+                    has_refreshed = true;
+                    continue;
+                }
+                break Err(Box::new(response.error_for_status().unwrap_err()))
+            }
         }
     }
 
     pub async fn get_contents(
-        &self,
+        &mut self,
         course_id: &str,
         section_id: &str,
-    ) -> Result<(String, String, Value), reqwest::Error> {
+    ) -> Result<(String, String, Value), Box<dyn Error>> {
         let url = self.get_signed_url(course_id, section_id).await?;
 
-        let response = self.client.get(&url).send().await?;
+        let mut has_refreshed = false;
+        loop {
+            let response = self.client.get(&url).send().await?;
 
-        if response.status().is_success() {
-            let body = response.json::<Value>().await?;
-            Ok((body["number"].as_str().unwrap_or("").to_string(), body["title"].as_str().unwrap_or("").to_string(), body["contents"].clone()))
-        } else {
-            Err(response.error_for_status().unwrap_err())
+            if response.status().is_success() {
+                let body = response.json::<Value>().await?;
+                break Ok((body["number"].as_str().unwrap_or("").to_string(), body["title"].as_str().unwrap_or("").to_string(), body["contents"].clone()))
+            } else {
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    if has_refreshed {
+                        eprintln!("🚧 Invalid access key");
+                        break Err(Box::new(response.error_for_status().unwrap_err()));
+                    }
+                    self.access_key = self.get_access_key().await?;
+                    has_refreshed = true;
+                    continue;
+                }
+                break Err(Box::new(response.error_for_status().unwrap_err()))
+            }
         }
     }
 
     pub async fn run_solver(
-        &self,
+        &mut self,
         course_id: &str,
         section_id: &str,
         content: &Value,
@@ -157,7 +216,7 @@ impl<'a> SenecaClient<'a> {
         let content_modules_len = content_modules.len();
 
         let now = Utc::now();
-        let (started, module_times) = generate_time_vec(now, Duration::seconds(7), Duration::seconds(30), content_modules_len);
+        let (started, module_times) = generate_time_vec(now, Duration::hours(2), Duration::hours(2), content_modules_len);
         
         let mut modules = Vec::<Value>::new();
 
@@ -261,98 +320,122 @@ impl<'a> SenecaClient<'a> {
 
         let url = "https://stats.app.senecalearning.com/api/stats/sessions";
 
-        let headers = Self::assemble_headers(vec![
-            ("Host", "stats.app.senecalearning.com"),
-            (
-                "User-Agent",
-                "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
-            ),
-            ("Accept", "*/*"),
-            ("Accept-Language", "en-GB,en;q=0.5"),
-            ("Accept-Encoding", "gzip, deflate, br, zstd"),
-            ("Content-Type", "application/json"),
-            ("Referer", "https://app.senecalearning.com/"),
-            ("access-key", &self.access_key),
-            (
-                "correlationId",
-                "1737330516472::76115c42-02c9-4d56-0000-000000000000",
-            ),
-            ("user-region", "GB"),
-            ("Origin", "https://app.senecalearning.com"),
-            ("DNT", "1"),
-            ("Sec-GPC", "1"),
-            ("Sec-Fetch-Dest", "empty"),
-            ("Sec-Fetch-Mode", "cors"),
-            ("Sec-Fetch-Site", "same-site"),
-            ("Connection", "keep-alive"),
-            ("host", "stats.app.senecalearning.com"),
-        ]);
+        let mut has_refreshed = false;
+        loop {
+            let headers = Self::assemble_headers(vec![
+                ("Host", "stats.app.senecalearning.com"),
+                (
+                    "User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
+                ),
+                ("Accept", "*/*"),
+                ("Accept-Language", "en-GB,en;q=0.5"),
+                ("Accept-Encoding", "gzip, deflate, br, zstd"),
+                ("Content-Type", "application/json"),
+                ("Referer", "https://app.senecalearning.com/"),
+                ("access-key", &self.access_key),
+                (
+                    "correlationId",
+                    "1737330516472::76115c42-02c9-4d56-0000-000000000000",
+                ),
+                ("user-region", "GB"),
+                ("Origin", "https://app.senecalearning.com"),
+                ("DNT", "1"),
+                ("Sec-GPC", "1"),
+                ("Sec-Fetch-Dest", "empty"),
+                ("Sec-Fetch-Mode", "cors"),
+                ("Sec-Fetch-Site", "same-site"),
+                ("Connection", "keep-alive"),
+                ("host", "stats.app.senecalearning.com"),
+            ]);
 
-        let response = self
-            .client
-            .post(url)
-            .headers(headers)
-            .json(&data)
-            .send()
-            .await?;
+            let response = self
+                .client
+                .post(url)
+                .headers(headers)
+                .json(&data)
+                .send()
+                .await?;
 
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(Box::new(response.error_for_status().unwrap_err()))
+            if response.status().is_success() {
+                break Ok(())
+            } else {
+                if response.status() == StatusCode::UNAUTHORIZED {
+                    if has_refreshed {
+                        eprintln!("🚧 Invalid access key");
+                        break Err(Box::new(response.error_for_status().unwrap_err()));
+                    }
+                    self.access_key = self.get_access_key().await?;
+                    has_refreshed = true;
+                    continue;
+                }
+                break Err(Box::new(response.error_for_status().unwrap_err()))
+            }
         }
     }
 
-    pub async fn get_assignments(&self) -> Result<Vec<Value>, Box<dyn Error>> {
+    pub async fn get_assignments(&mut self) -> Result<Vec<Value>, Box<dyn Error>> {
         let one_month_ago = Utc::now() - Duration::days(30);
         let url = 
             format!("https://assignments.app.senecalearning.com/api/students/me/assignments?limit=500&date={}&archived=false",
             byte_serialize(one_month_ago.to_rfc3339_opts(SecondsFormat::Secs, false).as_bytes()).collect::<String>());
 
-        let headers = Self::assemble_headers(vec![
-            ("Host", "assignments.app.senecalearning.com"),
-            (
-                "User-Agent",
-                "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
-            ),
-            ("Accept", "*/*"),
-            ("Accept-Language", "en-GB,en;q=0.5"),
-            ("Accept-Encoding", "gzip, deflate, br, zstd"),
-            ("Referer", "https://app.senecalearning.com/"),
-            ("access-key", &self.access_key),
-            (
-                "correlationId",
-                "1737330516472::76115c42-02c9-4d56-0000-000000000000",
-            ),
-            ("Content-Type", "application/json"),
-            ("X-Amz-Date", "20250122T190413Z"),
-            ("user-region", "GB"),
-            ("Origin", "https://app.senecalearning.com"),
-            ("DNT", "1"),
-            ("Sec-GPC", "1"),
-            ("Sec-Fetch-Dest", "empty"),
-            ("Sec-Fetch-Mode", "cors"),
-            ("Sec-Fetch-Site", "same-site"),
-            ("Connection", "keep-alive"),
-            ("host", "assignments.app.senecalearning.com"),
-        ]);
+        let mut has_refreshed = false;
+        loop {
+            let headers = Self::assemble_headers(vec![
+                ("Host", "assignments.app.senecalearning.com"),
+                (
+                    "User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:134.0) Gecko/20100101 Firefox/134.0",
+                ),
+                ("Accept", "*/*"),
+                ("Accept-Language", "en-GB,en;q=0.5"),
+                ("Accept-Encoding", "gzip, deflate, br, zstd"),
+                ("Referer", "https://app.senecalearning.com/"),
+                ("access-key", &self.access_key),
+                (
+                    "correlationId",
+                    "1737330516472::76115c42-02c9-4d56-0000-000000000000",
+                ),
+                ("Content-Type", "application/json"),
+                ("X-Amz-Date", "20250122T190413Z"),
+                ("user-region", "GB"),
+                ("Origin", "https://app.senecalearning.com"),
+                ("DNT", "1"),
+                ("Sec-GPC", "1"),
+                ("Sec-Fetch-Dest", "empty"),
+                ("Sec-Fetch-Mode", "cors"),
+                ("Sec-Fetch-Site", "same-site"),
+                ("Connection", "keep-alive"),
+                ("host", "assignments.app.senecalearning.com"),
+            ]);
 
-        let response = self.client.get(url).headers(headers).send().await?;
+            let response = self.client.get(&url).headers(headers).send().await?;
 
-        if response.status().is_success() {
-            let body = response.json::<Value>().await?;
-            Ok(body.as_object().unwrap()["items"]
-                .as_array()
-                .unwrap()
-                .to_vec())
-        } else {
-            if let Err(err) = response.error_for_status() {
-                Err(Box::new(err))
+            if response.status().is_success() {
+                let body = response.json::<Value>().await?;
+                break Ok(body.as_object().unwrap()["items"]
+                    .as_array()
+                    .unwrap()
+                    .to_vec())
             } else {
-                Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to fetch assignments",
-                )))
+                if let Err(err) = response.error_for_status() {
+                    if err.status() == Some(StatusCode::UNAUTHORIZED) {
+                        if has_refreshed {
+                            eprintln!("🚧 Invalid access key");
+                            break Err(Box::new(err));
+                        }
+                        self.access_key = self.get_access_key().await?;
+                        has_refreshed = true;
+                        continue;
+                    }
+                    break Err(Box::new(err))
+                } else {
+                    break Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Failed to fetch assignments",
+                    )))
+                }
             }
         }
     }
